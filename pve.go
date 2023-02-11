@@ -236,21 +236,32 @@ func mockPveServer(r *gin.Engine) error {
 		}
 		fmt.Printf("vmid: %d, event: %s\n", vmid, event)
 		if event != "vzcreate" {
-			if event != "vzstart" && event != "vzstop" && event != "vzrestart" {
+			if event == "vzstart" || event == "vzstop" || event == "vzrestart" {
 				taskMutex.Lock()
 				defer taskMutex.Unlock()
 				if _, ok := tasks[vmid]; ok {
 					c.JSON(200, gin.H{
 						"data": gin.H{
 							"status": "running",
+							"type":   event,
 						},
 					})
-					return
+				} else {
+					// assuming that this is a stopped task
+					c.JSON(200, gin.H{
+						"data": gin.H{
+							"status":     "stopped",
+							"exitstatus": "OK",
+							"type":       event,
+						},
+					})
 				}
+				return
 			}
 			c.Data(400, "", []byte(""))
 			return
 		}
+		// vzcreate
 		containerMutex.Lock()
 		defer containerMutex.Unlock()
 		for _, container := range containers {
@@ -259,6 +270,7 @@ func mockPveServer(r *gin.Engine) error {
 					c.JSON(200, gin.H{
 						"data": gin.H{
 							"status": "running",
+							"type":   "vzcreate",
 						},
 					})
 					return
@@ -266,6 +278,7 @@ func mockPveServer(r *gin.Engine) error {
 				c.JSON(200, gin.H{
 					"data": gin.H{
 						"status":     "stopped",
+						"type":       "vzcreate",
 						"exitstatus": "OK",
 					},
 				})
