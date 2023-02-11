@@ -25,6 +25,18 @@ func PVECheckAuth(c *gin.Context) error {
 	return nil
 }
 
+func PVERequireAuth(f gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		err := PVECheckAuth(c)
+		if err != nil {
+			// No ticket
+			c.Data(401, "", []byte(""))
+			return
+		}
+		f(c)
+	}
+}
+
 type LXCResource struct {
 	Vmid   int    `json:"vmid"`
 	Mem    int    `json:"mem"`
@@ -96,13 +108,7 @@ func mockPveServer(r *gin.Engine) error {
 			},
 		})
 	})
-	r.GET("/api2/json/nodes/:node/storage/:storage/content", func(c *gin.Context) {
-		err := PVECheckAuth(c)
-		if err != nil {
-			// No ticket
-			c.Data(401, "", []byte(""))
-			return
-		}
+	r.GET("/api2/json/nodes/:node/storage/:storage/content", PVERequireAuth(func(c *gin.Context) {
 		fmt.Println(c.Cookie("PVEAuthCookie"))
 		fmt.Println(c.GetHeader("CSRFPreventionToken"))
 		_ = c.Param("node")
@@ -112,6 +118,7 @@ func mockPveServer(r *gin.Engine) error {
 		if content != "vztmpl" {
 			// No content
 			c.Data(400, "", []byte(""))
+			return
 		}
 
 		type StorageContent struct {
@@ -119,28 +126,23 @@ func mockPveServer(r *gin.Engine) error {
 			Size   int64  `json:"size"`
 			Volid  string `json:"volid"`
 		}
-		response := make([]StorageContent, 0)
-		response = append(response, StorageContent{
-			Format: "tgz",
-			Size:   231060971,
-			Volid:  storage + ":vztmpl/vlab-debian-10-standard_10.7-1_amd64.tar.gz",
-		})
-		response = append(response, StorageContent{
-			Format: "tgz",
-			Size:   243431756,
-			Volid:  storage + ":vztmpl/vlab-debian-11-standard_11.0-1_amd64.tar.gz",
-		})
+		response := []StorageContent{
+			{
+				Format: "tgz",
+				Size:   231060971,
+				Volid:  storage + ":vztmpl/vlab-debian-10-standard_10.7-1_amd64.tar.gz",
+			},
+			{
+				Format: "tgz",
+				Size:   243431756,
+				Volid:  storage + ":vztmpl/vlab-debian-11-standard_11.0-1_amd64.tar.gz",
+			},
+		}
 		c.JSON(200, gin.H{
 			"data": response,
 		})
-	})
-	r.GET("/api2/json/cluster/resources", func(c *gin.Context) {
-		err := PVECheckAuth(c)
-		if err != nil {
-			// No ticket
-			c.Data(401, "", []byte(""))
-			return
-		}
+	}))
+	r.GET("/api2/json/cluster/resources", PVERequireAuth(func(c *gin.Context) {
 		type_ := c.Query("type")
 		if type_ != "vm" {
 			// not implemented
@@ -152,14 +154,8 @@ func mockPveServer(r *gin.Engine) error {
 		c.JSON(200, gin.H{
 			"data": containers,
 		})
-	})
-	r.POST("/api2/json/nodes/:node/lxc", func(c *gin.Context) {
-		err := PVECheckAuth(c)
-		if err != nil {
-			// No ticket
-			c.Data(401, "", []byte(""))
-			return
-		}
+	}))
+	r.POST("/api2/json/nodes/:node/lxc", PVERequireAuth(func(c *gin.Context) {
 		node := c.Param("node")
 		vmid, err := strconv.Atoi(c.PostForm("vmid"))
 		if err != nil {
@@ -195,14 +191,8 @@ func mockPveServer(r *gin.Engine) error {
 		c.JSON(200, gin.H{
 			"data": upid,
 		})
-	})
-	r.GET("/api2/json/nodes/:node/lxc/:vmid/config", func(c *gin.Context) {
-		err := PVECheckAuth(c)
-		if err != nil {
-			// No ticket
-			c.Data(401, "", []byte(""))
-			return
-		}
+	}))
+	r.GET("/api2/json/nodes/:node/lxc/:vmid/config", PVERequireAuth(func(c *gin.Context) {
 		vmid := c.Param("vmid")
 		_ = c.Param("node")
 		vmidInt, err := strconv.Atoi(vmid)
@@ -222,14 +212,8 @@ func mockPveServer(r *gin.Engine) error {
 				return
 			}
 		}
-	})
-	r.GET("/api2/json/nodes/:node/tasks/:upid/status", func(c *gin.Context) {
-		err := PVECheckAuth(c)
-		if err != nil {
-			// No ticket
-			c.Data(401, "", []byte(""))
-			return
-		}
+	}))
+	r.GET("/api2/json/nodes/:node/tasks/:upid/status", PVERequireAuth(func(c *gin.Context) {
 		_ = c.Param("node")
 		upid := c.Param("upid")
 		upid_parts := strings.Split(upid, ":")
@@ -289,14 +273,8 @@ func mockPveServer(r *gin.Engine) error {
 			}
 		}
 		c.Data(404, "", []byte(""))
-	})
-	r.POST("/api2/json/nodes/:node/lxc/:vmid/status/:action", func(c *gin.Context) {
-		err := PVECheckAuth(c)
-		if err != nil {
-			// No ticket
-			c.Data(401, "", []byte(""))
-			return
-		}
+	}))
+	r.POST("/api2/json/nodes/:node/lxc/:vmid/status/:action", PVERequireAuth(func(c *gin.Context) {
 		vmid := c.Param("vmid")
 		node := c.Param("node")
 		vmidInt, err := strconv.Atoi(vmid)
@@ -358,14 +336,8 @@ func mockPveServer(r *gin.Engine) error {
 		c.JSON(200, gin.H{
 			"data": upid,
 		})
-	})
-	r.DELETE("/api2/json/nodes/:node/lxc/:vmid", func(c *gin.Context) {
-		err := PVECheckAuth(c)
-		if err != nil {
-			// No ticket
-			c.Data(401, "", []byte(""))
-			return
-		}
+	}))
+	r.DELETE("/api2/json/nodes/:node/lxc/:vmid", PVERequireAuth(func(c *gin.Context) {
 		vmid := c.Param("vmid")
 		vmidInt, err := strconv.Atoi(vmid)
 		if err != nil {
@@ -391,7 +363,7 @@ func mockPveServer(r *gin.Engine) error {
 			}
 		}
 		c.Data(404, "", []byte(""))
-	})
+	}))
 
 	cert, err := GenSelfSignedTLSCertificate()
 	if err != nil {
