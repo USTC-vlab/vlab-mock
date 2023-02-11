@@ -74,9 +74,12 @@ type LXCResource struct {
 var containers = []LXCResource{}
 var containerMutex = &sync.Mutex{}
 
+var tasks = map[int]string{}
+var taskMutex = &sync.Mutex{}
+
 func createWait(vmid int) {
 	// Mutex
-	time.Sleep(10 * time.Second)
+	time.Sleep(20 * time.Second)
 	containerMutex.Lock()
 	defer containerMutex.Unlock()
 	for i, container := range containers {
@@ -85,6 +88,27 @@ func createWait(vmid int) {
 			containers[i].Lock = ""
 		}
 	}
+}
+
+func taskWait(vmid int, action string) {
+	time.Sleep(5 * time.Second)
+	containerMutex.Lock()
+	defer containerMutex.Unlock()
+	for i, container := range containers {
+		if container.Vmid == vmid {
+			switch action {
+			case "start":
+				containers[i].Status = "running"
+			case "stop":
+				containers[i].Status = "stopped"
+			case "restart":
+				containers[i].Status = "running"
+			}
+		}
+	}
+	taskMutex.Lock()
+	defer taskMutex.Unlock()
+	delete(tasks, vmid)
 }
 
 func mockPveServer(r *gin.Engine) error {
@@ -158,6 +182,8 @@ func mockPveServer(r *gin.Engine) error {
 			c.Data(400, "", []byte(""))
 			return
 		}
+		containerMutex.Lock()
+		defer containerMutex.Unlock()
 		c.JSON(200, gin.H{
 			"data": containers,
 		})
@@ -261,7 +287,18 @@ func mockPveServer(r *gin.Engine) error {
 		}
 		fmt.Printf("vmid: %d, event: %s\n", vmid, event)
 		if event != "vzcreate" {
-			// not implemented
+			if event != "vzstart" && event != "vzstop" && event != "vzrestart" {
+				taskMutex.Lock()
+				defer taskMutex.Unlock()
+				if _, ok := tasks[vmid]; ok {
+					c.JSON(200, gin.H{
+						"data": gin.H{
+							"status": "running",
+						},
+					})
+					return
+				}
+			}
 			c.Data(400, "", []byte(""))
 			return
 		}
@@ -283,6 +320,108 @@ func mockPveServer(r *gin.Engine) error {
 						"exitstatus": "OK",
 					},
 				})
+				return
+			}
+		}
+		c.Data(404, "", []byte(""))
+	})
+	r.POST("/api2/json/nodes/:node/lxc/:vmid/status/:action", func(c *gin.Context) {
+		err := PVECheckAuth(c)
+		if err != nil {
+			// No ticket
+			c.Data(401, "", []byte(""))
+			return
+		}
+		vmid := c.Param("vmid")
+		node := c.Param("node")
+		vmidInt, err := strconv.Atoi(vmid)
+		if err != nil {
+			fmt.Printf("invalid vmid: %v", err)
+			c.Data(400, "", []byte(""))
+			return
+		}
+		action := c.Param("action")
+		if action != "start" && action != "stop" && action != "restart" {
+			fmt.Printf("invalid action: %s", action)
+			c.Data(400, "", []byte(""))
+			return
+		}
+		containerMutex.Lock()
+		defer containerMutex.Unlock()
+
+		for _, container := range containers {
+			if container.Vmid == vmidInt {
+				if container.Lock != "" {
+					fmt.Printf("container %d is locked", vmidInt)
+					c.Data(400, "", []byte(""))
+					return
+				}
+				switch action {
+				case "start":
+					if container.Status == "running" {
+						fmt.Printf("container %d is already running", vmidInt)
+						c.Data(400, "", []byte(""))
+						return
+					}
+				case "stop":
+					if container.Status == "stopped" {
+						fmt.Printf("container %d is already stopped", vmidInt)
+						c.Data(400, "", []byte(""))
+						return
+					}
+				case "restart":
+					if container.Status == "stopped" {
+						fmt.Printf("container %d is stopped", vmidInt)
+						c.Data(400, "", []byte(""))
+						return
+					}
+				}
+			}
+		}
+
+		taskMutex.Lock()
+		defer taskMutex.Unlock()
+		if _, ok := tasks[vmidInt]; ok {
+			fmt.Printf("task for vmid %d already exists", vmidInt)
+			c.Data(400, "", []byte(""))
+			return
+		} else {
+			tasks[vmidInt] = action
+		}
+		go taskWait(vmidInt, action)
+		upid := "UPID:" + node + ":00000000:00000000:00000000:vz" + action + ":" + vmid + ":mock@pve:"
+		c.JSON(200, gin.H{
+			"data": upid,
+		})
+	})
+	r.DELETE("/api2/json/nodes/:node/lxc/:vmid", func(c *gin.Context) {
+		err := PVECheckAuth(c)
+		if err != nil {
+			// No ticket
+			c.Data(401, "", []byte(""))
+			return
+		}
+		vmid := c.Param("vmid")
+		vmidInt, err := strconv.Atoi(vmid)
+		if err != nil {
+			fmt.Printf("invalid vmid: %v", err)
+			c.Data(400, "", []byte(""))
+			return
+		}
+		containerMutex.Lock()
+		defer containerMutex.Unlock()
+		for i, container := range containers {
+			if container.Vmid == vmidInt {
+				if container.Lock != "" {
+					fmt.Printf("container %d is locked", vmidInt)
+					c.Data(400, "", []byte(""))
+					return
+				}
+				containers = append(containers[:i], containers[i+1:]...)
+				c.Data(200, "", []byte(""))
+				taskMutex.Lock()
+				defer taskMutex.Unlock()
+				delete(tasks, vmidInt)
 				return
 			}
 		}
