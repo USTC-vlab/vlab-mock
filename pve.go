@@ -377,6 +377,25 @@ func mockPveServer(r *gin.Engine) error {
 		}
 		c.Data(404, "", []byte(""))
 	}))
+	r.GET("/api2/json/nodes/:node/lxc/:vmid/status/current", PVERequireAuth(func(c *gin.Context) {
+		vmid := c.Param("vmid")
+		_ = c.Param("node")
+		vmidInt, err := strconv.Atoi(vmid)
+		if err != nil {
+			fmt.Printf("invalid vmid: %v", err)
+			c.Data(400, "", []byte(""))
+			return
+		}
+		containerMutex.Lock()
+		defer containerMutex.Unlock()
+		for _, container := range containers {
+			if container.Vmid == vmidInt {
+				c.JSON(200, gin.H{
+					"data": container,
+				})
+			}
+		}
+	}))
 
 	cert, err := GenSelfSignedTLSCertificate()
 	if err != nil {
