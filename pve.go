@@ -78,7 +78,7 @@ func taskWait(vmid int, action string) {
 				containers[i].Status = "running"
 			case "stop":
 				containers[i].Status = "stopped"
-			case "restart":
+			case "reboot":
 				containers[i].Status = "running"
 			}
 		}
@@ -236,7 +236,7 @@ func mockPveServer(r *gin.Engine) error {
 		}
 		fmt.Printf("vmid: %d, event: %s\n", vmid, event)
 		if event != "vzcreate" {
-			if event == "vzstart" || event == "vzstop" || event == "vzrestart" {
+			if event == "vzstart" || event == "vzstop" || event == "vzreboot" {
 				taskMutex.Lock()
 				defer taskMutex.Unlock()
 				if _, ok := tasks[vmid]; ok {
@@ -297,7 +297,7 @@ func mockPveServer(r *gin.Engine) error {
 			return
 		}
 		action := c.Param("action")
-		if action != "start" && action != "stop" && action != "restart" {
+		if action != "start" && action != "stop" && action != "reboot" {
 			fmt.Printf("invalid action: %s", action)
 			c.Data(400, "", []byte(""))
 			return
@@ -325,7 +325,7 @@ func mockPveServer(r *gin.Engine) error {
 						c.Data(400, "", []byte(""))
 						return
 					}
-				case "restart":
+				case "reboot":
 					if container.Status == "stopped" {
 						fmt.Printf("container %d is stopped", vmidInt)
 						c.Data(400, "", []byte(""))
