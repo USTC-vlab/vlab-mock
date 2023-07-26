@@ -37,19 +37,63 @@ func PVERequireAuth(f gin.HandlerFunc) gin.HandlerFunc {
 	}
 }
 
-type LXCResource struct {
-	Vmid   int    `json:"vmid"`
-	Mem    int    `json:"mem"`
-	Status string `json:"status"`
-	Name   string `json:"name"`
-	Uptime int    `json:"uptime"`
-	Lock   string `json:"lock"`
-	Node   string `json:"node"`
-	Maxmem int    `json:"maxmem"`
+func Status(c *gin.Context) {
+	vmid := c.Param("vmid")
+	_ = c.Param("node")
+	vmidInt, err := strconv.Atoi(vmid)
+	if err != nil {
+		fmt.Printf("invalid vmid: %v", err)
+		c.Data(400, "", []byte(""))
+		return
+	}
+	vmsMutex.Lock()
+	defer vmsMutex.Unlock()
+	for _, vm := range vms {
+		if vm.Vmid == vmidInt {
+			c.JSON(200, gin.H{
+				"data": vm,
+			})
+			return
+		}
+	}
 }
 
-var containers = []LXCResource{}
-var containerMutex = &sync.Mutex{}
+func Config(c *gin.Context) {
+	vmid := c.Param("vmid")
+	_ = c.Param("node")
+	vmidInt, err := strconv.Atoi(vmid)
+	if err != nil {
+		fmt.Printf("invalid vmid: %v", err)
+		c.Data(400, "", []byte(""))
+		return
+	}
+	vmsMutex.Lock()
+	defer vmsMutex.Unlock()
+	for _, vm := range vms {
+		if vm.Vmid == vmidInt {
+			c.JSON(200, gin.H{
+				"data": vm,
+			})
+			return
+		}
+	}
+}
+
+type Resource struct {
+	Vmid     int    `json:"vmid"`
+	Mem      int    `json:"mem"`
+	Status   string `json:"status"`
+	Name     string `json:"name"`
+	Uptime   int    `json:"uptime"`
+	Lock     string `json:"lock"`
+	Node     string `json:"node"`
+	Maxmem   int    `json:"maxmem"`
+	Template int    `json:"template"`
+	Type     string `json:"type"`
+}
+
+var vms = []Resource{}
+var vmsMutex = &sync.Mutex{}
 
 var tasks = map[int]string{}
 var taskMutex = &sync.Mutex{}
@@ -57,29 +101,31 @@ var taskMutex = &sync.Mutex{}
 func createWait(vmid int) {
 	// Mutex
 	time.Sleep(20 * time.Second)
-	containerMutex.Lock()
-	defer containerMutex.Unlock()
-	for i, container := range containers {
-		if container.Vmid == vmid {
-			fmt.Println("Unlocked container (mark as creation done)", vmid)
-			containers[i].Lock = ""
+	vmsMutex.Lock()
+	defer vmsMutex.Unlock()
+	for i, vm := range vms {
+		if vm.Vmid == vmid {
+			fmt.Println("Unlocked container/kvm (mark as creation done)", vmid)
+			vms[i].Lock = ""
 		}
 	}
 }
 
 func taskWait(vmid int, action string) {
 	time.Sleep(5 * time.Second)
-	containerMutex.Lock()
-	defer containerMutex.Unlock()
-	for i, container := range containers {
-		if container.Vmid == vmid {
+	vmsMutex.Lock()
+	defer vmsMutex.Unlock()
+	for i, vm := range vms {
+		if vm.Vmid == vmid {
 			switch action {
 			case "start":
-				containers[i].Status = "running"
+				vms[i].Status = "running"
 			case "stop":
-				containers[i].Status = "stopped"
+				vms[i].Status = "stopped"
+			case "reset":
+				vms[i].Status = "running"
 			case "reboot":
-				containers[i].Status = "running"
+				vms[i].Status = "running"
 			}
 		}
 	}
@@ -89,6 +135,19 @@ func taskWait(vmid int, action string) {
 }
 
 func mockPveServer(r *gin.Engine) error {
+	// Create a KVM template
+	vms = append(vms, Resource{
+		Vmid:     101,
+		Mem:      1024,
+		Status:   "stopped",
+		Name:     "vlab-kvm-debian-11",
+		Uptime:   0,
+		Lock:     "",
+		Node:     "pv0",
+		Maxmem:   1024000,
+		Template: 1,
+		Type:     "qemu",
+	})
 	// as https://github.com/gin-gonic/gin/pull/2823 is not being merged for over 1 yr
 	// so have to write /api2/json/ before all routers
 	r.POST("/api2/json/access/ticket", func(c *gin.Context) {
@@ -149,10 +208,10 @@ func mockPveServer(r *gin.Engine) error {
 			c.Data(400, "", []byte(""))
 			return
 		}
-		containerMutex.Lock()
-		defer containerMutex.Unlock()
+		vmsMutex.Lock()
+		defer vmsMutex.Unlock()
 		c.JSON(200, gin.H{
-			"data": containers,
+			"data": vms,
 		})
 	}))
 	r.POST("/api2/json/nodes/:node/lxc", PVERequireAuth(func(c *gin.Context) {
@@ -165,16 +224,16 @@ func mockPveServer(r *gin.Engine) error {
 		}
 		name := c.PostForm("name")
 
-		containerMutex.Lock()
-		defer containerMutex.Unlock()
-		for _, container := range containers {
-			if container.Vmid == vmid {
-				fmt.Printf("container %d exists", vmid)
+		vmsMutex.Lock()
+		defer vmsMutex.Unlock()
+		for _, vm := range vms {
+			if vm.Vmid == vmid {
+				fmt.Printf("vm %d exists\n", vmid)
 				c.Data(400, "", []byte(""))
 				return
 			}
 		}
-		containers = append(containers, LXCResource{
+		vms = append(vms, Resource{
 			Vmid:   vmid,
 			Mem:    1024,
 			Maxmem: 1024000,
@@ -183,6 +242,7 @@ func mockPveServer(r *gin.Engine) error {
 			Uptime: 0,
 			Lock:   "create",
 			Node:   node,
+			Type:   "lxc",
 		})
 		go createWait(vmid)
 
@@ -193,25 +253,7 @@ func mockPveServer(r *gin.Engine) error {
 		})
 	}))
 	r.GET("/api2/json/nodes/:node/lxc/:vmid/config", PVERequireAuth(func(c *gin.Context) {
-		vmid := c.Param("vmid")
-		_ = c.Param("node")
-		vmidInt, err := strconv.Atoi(vmid)
-		if err != nil {
-			_ = fmt.Errorf("invalid vmid: %v", err)
-			c.Data(400, "", []byte(""))
-			return
-		}
-
-		containerMutex.Lock()
-		defer containerMutex.Unlock()
-		for _, container := range containers {
-			if container.Vmid == vmidInt {
-				c.JSON(200, gin.H{
-					"data": container,
-				})
-				return
-			}
-		}
+		Config(c)
 	}))
 	r.GET("/api2/json/nodes/:node/tasks/:upid/status", PVERequireAuth(func(c *gin.Context) {
 		_ = c.Param("node")
@@ -235,8 +277,11 @@ func mockPveServer(r *gin.Engine) error {
 			return
 		}
 		fmt.Printf("vmid: %d, event: %s\n", vmid, event)
-		if event != "vzcreate" {
-			if event == "vzstart" || event == "vzstop" || event == "vzreboot" {
+		if event != "vzcreate" && event != "qmclone" {
+			if event == "vzstart" || event == "vzstop" || event == "vzreboot" ||
+				event == "qmstart" || event == "qmstop" || event == "qmreset" ||
+				event == "qmreboot" {
+
 				taskMutex.Lock()
 				defer taskMutex.Unlock()
 				if _, ok := tasks[vmid]; ok {
@@ -261,12 +306,12 @@ func mockPveServer(r *gin.Engine) error {
 			c.Data(400, "", []byte(""))
 			return
 		}
-		// vzcreate
-		containerMutex.Lock()
-		defer containerMutex.Unlock()
-		for _, container := range containers {
-			if container.Vmid == vmid {
-				if container.Lock == "create" {
+		// vzcreate / qmclone
+		vmsMutex.Lock()
+		defer vmsMutex.Unlock()
+		for _, vm := range vms {
+			if vm.Vmid == vmid {
+				if vm.Lock == "create" {
 					c.JSON(200, gin.H{
 						"data": gin.H{
 							"status": "running",
@@ -274,11 +319,25 @@ func mockPveServer(r *gin.Engine) error {
 						},
 					})
 					return
+				} else if vm.Lock == "clone" {
+					c.JSON(200, gin.H{
+						"data": gin.H{
+							"status": "running",
+							"type":   "qmclone",
+						},
+					})
+					return
+				}
+				var typ string
+				if vm.Type == "lxc" {
+					typ = "vzcreate"
+				} else if vm.Type == "qemu" {
+					typ = "qmclone"
 				}
 				c.JSON(200, gin.H{
 					"data": gin.H{
 						"status":     "stopped",
-						"type":       "vzcreate",
+						"type":       typ,
 						"exitstatus": "OK",
 					},
 				})
@@ -302,10 +361,10 @@ func mockPveServer(r *gin.Engine) error {
 			c.Data(400, "", []byte(""))
 			return
 		}
-		containerMutex.Lock()
-		defer containerMutex.Unlock()
+		vmsMutex.Lock()
+		defer vmsMutex.Unlock()
 
-		for _, container := range containers {
+		for _, container := range vms {
 			if container.Vmid == vmidInt {
 				if container.Lock != "" {
 					fmt.Printf("container %d is locked", vmidInt)
@@ -358,16 +417,16 @@ func mockPveServer(r *gin.Engine) error {
 			c.Data(400, "", []byte(""))
 			return
 		}
-		containerMutex.Lock()
-		defer containerMutex.Unlock()
-		for i, container := range containers {
+		vmsMutex.Lock()
+		defer vmsMutex.Unlock()
+		for i, container := range vms {
 			if container.Vmid == vmidInt {
 				if container.Lock != "" {
 					fmt.Printf("container %d is locked", vmidInt)
 					c.Data(400, "", []byte(""))
 					return
 				}
-				containers = append(containers[:i], containers[i+1:]...)
+				vms = append(vms[:i], vms[i+1:]...)
 				c.Data(200, "", []byte(""))
 				taskMutex.Lock()
 				defer taskMutex.Unlock()
@@ -378,23 +437,116 @@ func mockPveServer(r *gin.Engine) error {
 		c.Data(404, "", []byte(""))
 	}))
 	r.GET("/api2/json/nodes/:node/lxc/:vmid/status/current", PVERequireAuth(func(c *gin.Context) {
+		Status(c)
+	}))
+	r.POST("/api2/json/nodes/:node/qemu/:vmid/clone", PVERequireAuth(func(c *gin.Context) {
 		vmid := c.Param("vmid")
-		_ = c.Param("node")
+		node := c.Param("node")
+		new_vmid := c.PostForm("newid")
+		new_vmidInt, err := strconv.Atoi(new_vmid)
+		if err != nil {
+			fmt.Printf("invalid newid: %v", err)
+			c.Data(400, "", []byte(""))
+			return
+		}
+		name := c.PostForm("name")
+
+		vmsMutex.Lock()
+		defer vmsMutex.Unlock()
+		for _, vm := range vms {
+			if vm.Vmid == new_vmidInt {
+				fmt.Printf("vm %s exists\n", vmid)
+				c.Data(400, "", []byte(""))
+				return
+			}
+		}
+		vms = append(vms, Resource{
+			Vmid:   new_vmidInt,
+			Mem:    1024,
+			Maxmem: 1024000,
+			Status: "stopped",
+			Name:   name,
+			Uptime: 0,
+			Lock:   "clone", // ??? Not sure here
+			Node:   node,
+			Type:   "qemu",
+		})
+		go createWait(new_vmidInt)
+
+		upid := "UPID:" + node + ":00000000:00000000:00000000:qmclone:" + vmid + ":mock@pve:"
+
+		c.JSON(200, gin.H{
+			"data": upid,
+		})
+	}))
+	r.GET("/api2/json/nodes/:node/qemu/:vmid/config", PVERequireAuth(func(c *gin.Context) {
+		Config(c)
+	}))
+	r.GET("/api2/json/nodes/:node/qemu/:vmid/status/current", PVERequireAuth(func(c *gin.Context) {
+		Status(c)
+	}))
+	r.POST("/api2/json/nodes/:node/qemu/:vmid/status/:action", PVERequireAuth(func(c *gin.Context) {
+		vmid := c.Param("vmid")
+		node := c.Param("node")
 		vmidInt, err := strconv.Atoi(vmid)
 		if err != nil {
 			fmt.Printf("invalid vmid: %v", err)
 			c.Data(400, "", []byte(""))
 			return
 		}
-		containerMutex.Lock()
-		defer containerMutex.Unlock()
-		for _, container := range containers {
+		action := c.Param("action")
+		if action != "start" && action != "stop" && action != "reset" {
+			fmt.Printf("invalid action: %s", action)
+			c.Data(400, "", []byte(""))
+			return
+		}
+		vmsMutex.Lock()
+		defer vmsMutex.Unlock()
+
+		for _, container := range vms {
 			if container.Vmid == vmidInt {
-				c.JSON(200, gin.H{
-					"data": container,
-				})
+				if container.Lock != "" {
+					fmt.Printf("vm %d is locked\n", vmidInt)
+					c.Data(400, "", []byte(""))
+					return
+				}
+				switch action {
+				case "start":
+					if container.Status == "running" {
+						fmt.Printf("vm %d is already running", vmidInt)
+						c.Data(400, "", []byte(""))
+						return
+					}
+				case "stop":
+					if container.Status == "stopped" {
+						fmt.Printf("vm %d is already stopped", vmidInt)
+						c.Data(400, "", []byte(""))
+						return
+					}
+				case "reset":
+					if container.Status == "stopped" {
+						fmt.Printf("vm %d is stopped", vmidInt)
+						c.Data(400, "", []byte(""))
+						return
+					}
+				}
 			}
 		}
+
+		taskMutex.Lock()
+		defer taskMutex.Unlock()
+		if _, ok := tasks[vmidInt]; ok {
+			fmt.Printf("task for vmid %d already exists", vmidInt)
+			c.Data(400, "", []byte(""))
+			return
+		} else {
+			tasks[vmidInt] = action
+		}
+		go taskWait(vmidInt, action)
+		upid := "UPID:" + node + ":00000000:00000000:00000000:qm" + action + ":" + vmid + ":mock@pve:"
+		c.JSON(200, gin.H{
+			"data": upid,
+		})
 	}))
 
 	cert, err := GenSelfSignedTLSCertificate()
