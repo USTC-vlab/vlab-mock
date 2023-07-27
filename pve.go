@@ -302,6 +302,15 @@ func mockPveServer(r *gin.Engine) error {
 					})
 				}
 				return
+			} else if event == "resize" {
+				c.JSON(200, gin.H{
+					"data": gin.H{
+						"status":     "stopped",
+						"exitstatus": "OK",
+						"type":       event,
+					},
+				})
+				return
 			}
 			c.Data(400, "", []byte(""))
 			return
@@ -544,6 +553,22 @@ func mockPveServer(r *gin.Engine) error {
 		}
 		go taskWait(vmidInt, action)
 		upid := "UPID:" + node + ":00000000:00000000:00000000:qm" + action + ":" + vmid + ":mock@pve:"
+		c.JSON(200, gin.H{
+			"data": upid,
+		})
+	}))
+	r.PUT("/api2/json/nodes/:node/qemu/:vmid/config", PVERequireAuth(func(c *gin.Context) {
+		// TODO
+		// ignore this temporarily (sync API, returns null)
+	}))
+	r.PUT("/api2/json/nodes/:node/qemu/:vmid/resize", PVERequireAuth(func(c *gin.Context) {
+		// TODO
+		node := c.Param("node")
+		vmid := c.Param("vmid")
+
+		// resize is a sync API. resizing takes time
+		time.Sleep(3 * time.Second)
+		upid := "UPID:" + node + ":00000000:00000000:00000000:resize:" + vmid + ":mock@pve:"
 		c.JSON(200, gin.H{
 			"data": upid,
 		})
