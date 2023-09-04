@@ -56,6 +56,7 @@ func Status(c *gin.Context) {
 			return
 		}
 	}
+	c.Data(404, "", []byte(""))
 }
 
 func Config(c *gin.Context) {
