@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -18,10 +17,11 @@ func PVECheckAuth(c *gin.Context) error {
 	if err != nil || ticket != "ticket" {
 		return err
 	}
-	csrfToken := c.GetHeader("CSRFPreventionToken")
-	if csrfToken != "CSRFPreventionToken" {
-		return errors.New("invalid CSRFPreventionToken")
-	}
+	// Remove csrfToken check, as new proxmoxer will only send it when method != GET
+	// csrfToken := c.GetHeader("CSRFPreventionToken")
+	// if csrfToken != "CSRFPreventionToken" {
+	// 	return errors.New("invalid CSRFPreventionToken")
+	// }
 	return nil
 }
 
