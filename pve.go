@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -15,7 +16,10 @@ import (
 func PVECheckAuth(c *gin.Context) error {
 	ticket, err := c.Cookie("PVEAuthCookie")
 	if err != nil || ticket != "ticket" {
-		return err
+		token := c.GetHeader("Authorization")
+		if !strings.HasPrefix(token, "PVEAPIToken=") {
+			return errors.New("invalid ticket and no token given")
+		}
 	}
 	// Remove csrfToken check, as new proxmoxer will only send it when method != GET
 	// csrfToken := c.GetHeader("CSRFPreventionToken")
@@ -30,7 +34,7 @@ func PVERequireAuth(f gin.HandlerFunc) gin.HandlerFunc {
 		err := PVECheckAuth(c)
 		if err != nil {
 			// No ticket
-			c.Data(401, "", []byte(""))
+			c.Data(401, "", []byte(err.Error()))
 			return
 		}
 		f(c)
